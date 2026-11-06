@@ -1,20 +1,19 @@
 """
-app.py — Streamlit UI for TC Sarthi.
+app.py — TC Sarthi UI (horizontal layout).
 
 Layout:
-    Header (full width)
-    ┌──────────────────────┬───────────────────────────────┐
-    │  LEFT: input         │  RIGHT: result                │
-    └──────────────────────┴───────────────────────────────┘
-
-Theme:
-    Dark grey background. Cards slightly lighter.
-    Icon chips, risk meter, coloured verdict block.
-
-IMPORTANT:
-    All HTML is written as ONE-LINE strings with no indentation.
-    Streamlit treats 4+ leading spaces as a code block, which
-    makes raw HTML show up as text instead of rendering it.
+    ┌──────────────┬──────────────┐
+    │  ✍️ Paste    │  📥 Upload   │
+    └──────────────┴──────────────┘
+    ┌──────────────────────────────┐
+    │   🚀 Analyze                 │
+    └──────────────────────────────┘
+    ┌──────────────────────────────┐
+    │   📊 Output card             │
+    └──────────────────────────────┘
+    ┌────┬────┬────┬────┐
+    │ ⚡ │ 🔒 │ 🎯 │ 💡 │
+    └────┴────┴────┴────┘
 """
 
 import sys
@@ -28,7 +27,7 @@ from tc_sarthi.agent import run
 
 
 # ─────────────────────────────────────────────────────────────
-# Page config — first Streamlit call.
+# Config
 # ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="TC Sarthi",
@@ -37,284 +36,192 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+MAX_FILE_KB = 50
+MAX_FILE_BYTES = MAX_FILE_KB * 1024
+MAX_PASTE_CHARS = 50000
 
-# ─────────────────────────────────────────────────────────────
-# Dark theme CSS.
-# ─────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <style>
-        .stApp {
-            background-color: #0b0e13;
-            color: #e6e8eb;
-        }
 
-        .block-container {
-            padding-top: 1.4rem;
-            padding-bottom: 2rem;
-            max-width: 1400px;
-        }
-
-        /* ── Header ───────────────────────────────────────── */
-        .tc-header {
-            background: linear-gradient(135deg, #111827 0%, #1a2332 100%);
-            border: 1px solid #1f2937;
-            border-left: 4px solid #4aa3ff;
-            padding: 20px 26px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-        }
-        .tc-header h1 {
-            margin: 0;
-            font-size: 24px;
-            font-weight: 700;
-            color: #f5f7fa;
-            letter-spacing: 0.2px;
-        }
-        .tc-header p {
-            margin: 6px 0 0 0;
-            font-size: 13.5px;
-            color: #9aa3af;
-            line-height: 1.5;
-        }
-        .tc-badge-live {
-            display: inline-block;
-            background: #0f2d1f;
-            color: #6ee7a6;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 3px 9px;
-            border-radius: 999px;
-            margin-left: 8px;
-            vertical-align: middle;
-        }
-
-        /* ── Card ─────────────────────────────────────────── */
-        .tc-card {
-            background: #12161d;
-            border: 1px solid #1f2937;
-            border-radius: 10px;
-            padding: 16px 18px;
-            margin-bottom: 12px;
-        }
-
-        /* ── Section title with icon chip ─────────────────── */
-        .tc-sec {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        .tc-chip {
-            width: 28px;
-            height: 28px;
-            border-radius: 8px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 15px;
-        }
-        .tc-chip-blue   { background: #10243d; }
-        .tc-chip-amber  { background: #2d2110; }
-        .tc-chip-green  { background: #10291c; }
-        .tc-title {
-            font-size: 14.5px;
-            font-weight: 700;
-            color: #e6e8eb;
-            letter-spacing: 0.2px;
-        }
-
-        /* ── Main points list ─────────────────────────────── */
-        .tc-points { margin: 0; padding: 0; list-style: none; }
-        .tc-points li {
-            display: flex;
-            gap: 10px;
-            font-size: 13.5px;
-            color: #cfd3d8;
-            line-height: 1.55;
-            margin-bottom: 8px;
-        }
-        .tc-points li::before {
-            content: "▸";
-            color: #4aa3ff;
-            font-weight: 700;
-            flex-shrink: 0;
-        }
-
-        /* ── Risk card ────────────────────────────────────── */
-        .risk-card {
-            background: #12161d;
-            border: 1px solid #1f2937;
-            border-radius: 10px;
-            padding: 14px 16px;
-            margin-bottom: 10px;
-        }
-        .risk-card.low    { border-left: 4px solid #22c55e; }
-        .risk-card.medium { border-left: 4px solid #f59e0b; }
-        .risk-card.high   { border-left: 4px solid #ef4444; }
-
-        .risk-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        .risk-name {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            font-size: 13.5px;
-            font-weight: 700;
-            color: #e6e8eb;
-        }
-        .risk-icon {
-            width: 26px; height: 26px;
-            border-radius: 7px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-        }
-        .risk-icon.low    { background: #0f2d1f; }
-        .risk-icon.medium { background: #2d2110; }
-        .risk-icon.high   { background: #2d1010; }
-
-        .risk-body {
-            font-size: 13px;
-            color: #b8bec7;
-            line-height: 1.55;
-        }
-
-        /* ── Pill badge ───────────────────────────────────── */
-        .pill {
-            font-size: 10.5px;
-            font-weight: 700;
-            letter-spacing: 0.6px;
-            text-transform: uppercase;
-            padding: 3px 10px;
-            border-radius: 999px;
-        }
-        .pill.low    { background: #0f2d1f; color: #6ee7a6; }
-        .pill.medium { background: #2d2110; color: #fcd34d; }
-        .pill.high   { background: #2d1010; color: #fca5a5; }
-
-        /* ── Risk meter bar ───────────────────────────────── */
-        .meter {
-            width: 100%;
-            height: 6px;
-            background: #1a1f28;
-            border-radius: 999px;
-            overflow: hidden;
-            margin-top: 4px;
-        }
-        .meter > span {
-            display: block;
-            height: 100%;
-            border-radius: 999px;
-        }
-        .meter > span.low    { width: 33%;  background: #22c55e; }
-        .meter > span.medium { width: 66%;  background: #f59e0b; }
-        .meter > span.high   { width: 100%; background: #ef4444; }
-
-        /* ── Verdict ──────────────────────────────────────── */
-        .verdict {
-            border-radius: 12px;
-            padding: 18px 20px;
-            margin-top: 6px;
-        }
-        .verdict.low {
-            background: linear-gradient(135deg, #0f2d1f 0%, #10291c 100%);
-            border: 1px solid #166534;
-        }
-        .verdict.medium {
-            background: linear-gradient(135deg, #2d2110 0%, #2a1e0d 100%);
-            border: 1px solid #a16207;
-        }
-        .verdict.high {
-            background: linear-gradient(135deg, #2d1010 0%, #2a0d0d 100%);
-            border: 1px solid #991b1b;
-        }
-        .verdict-label {
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 1.2px;
-            text-transform: uppercase;
-            color: #9aa3af;
-        }
-        .verdict-level {
-            font-size: 22px;
-            font-weight: 800;
-            margin-top: 4px;
-            letter-spacing: 0.4px;
-        }
-        .verdict.low    .verdict-level { color: #6ee7a6; }
-        .verdict.medium .verdict-level { color: #fcd34d; }
-        .verdict.high   .verdict-level { color: #fca5a5; }
-        .verdict-msg {
-            font-size: 13.5px;
-            color: #d1d5db;
-            line-height: 1.6;
-            margin-top: 8px;
-        }
-
-        /* ── Meta footer ──────────────────────────────────── */
-        .tc-meta {
-            color: #6b7280;
-            font-size: 11.5px;
-            margin-top: 12px;
-            letter-spacing: 0.3px;
-        }
-        .tc-meta b { color: #9aa3af; }
-
-        /* ── Muted text ───────────────────────────────────── */
-        .tc-muted { color: #6b7280; font-size: 12px; line-height: 1.5; }
-
-        /* ── Dark inputs ──────────────────────────────────── */
-        .stTextArea textarea,
-        .stTextInput input {
-            background-color: #0f1319 !important;
-            color: #e6e8eb !important;
-            border: 1px solid #1f2937 !important;
-            border-radius: 8px !important;
-        }
-        .stTextArea textarea::placeholder {
-            color: #4b5563 !important;
-        }
-        [data-testid="stFileUploaderDropzone"] {
-            background-color: #0f1319 !important;
-            border: 1px dashed #1f2937 !important;
-            border-radius: 8px !important;
-        }
-        [data-testid="stFileUploaderDropzone"] * {
-            color: #9aa3af !important;
-        }
-        .stButton button {
-            border-radius: 8px !important;
-            font-weight: 600 !important;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+@st.cache_data(ttl=600, show_spinner=False)
+def _analyze_cached(text: str) -> dict:
+    return run(text)
 
 
 # ─────────────────────────────────────────────────────────────
-# Small helpers for one-line HTML.
-# NOTE: no leading whitespace — that's what broke rendering.
+# CSS
 # ─────────────────────────────────────────────────────────────
-def _pill(level: str) -> str:
-    level = (level or "low").lower()
-    if level not in ("low", "medium", "high"):
-        level = "low"
-    return f'<span class="pill {level}">{level}</span>'
+st.markdown("""
+<style>
+    .stApp { background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #f0f9ff 100%); }
+    .block-container { padding-top: 1.6rem; padding-bottom: 2rem; max-width: 1150px; }
+
+    .tc-header {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
+        padding: 26px 30px; margin-bottom: 22px; position: relative; overflow: hidden;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04);
+    }
+    .tc-header::before {
+        content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+        background: linear-gradient(90deg, #4f46e5, #7c3aed, #ec4899);
+    }
+    .tc-header h1 { margin: 0; font-size: 24px; font-weight: 800; color: #0f172a; letter-spacing: -0.4px; }
+    .tc-header p  { margin: 8px 0 0 0; font-size: 14px; color: #64748b; }
+
+    .tc-card {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+        padding: 20px; margin-bottom: 14px;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04);
+    }
+    .tc-sec { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .tc-icon {
+        width: 32px; height: 32px; border-radius: 9px;
+        background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+        display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
+    }
+    .tc-title { font-size: 14px; font-weight: 700; color: #0f172a; }
+
+    .res-card { border-radius: 16px; padding: 30px 26px; border: 1px solid; }
+    .res-card.low    { background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-color: #a7f3d0; }
+    .res-card.medium { background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fde68a; }
+    .res-card.high   { background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-color: #fecaca; }
+
+    .res-pct { font-size: 68px; font-weight: 800; line-height: 1; letter-spacing: -2px; }
+    .res-pct.low    { color: #047857; }
+    .res-pct.medium { color: #b45309; }
+    .res-pct.high   { color: #b91c1c; }
+
+    .res-label {
+        font-size: 12px; font-weight: 700; letter-spacing: 1.5px;
+        text-transform: uppercase; color: #64748b; margin-top: 8px;
+    }
+    .res-bar {
+        width: 100%; height: 10px; background: rgba(255,255,255,0.65);
+        border-radius: 999px; overflow: hidden; margin: 18px 0 22px;
+        border: 1px solid rgba(0,0,0,0.04);
+    }
+    .res-bar > span { display: block; height: 100%; border-radius: 999px; }
+    .res-bar > span.low    { background: linear-gradient(90deg, #10b981, #059669); }
+    .res-bar > span.medium { background: linear-gradient(90deg, #f59e0b, #d97706); }
+    .res-bar > span.high   { background: linear-gradient(90deg, #ef4444, #dc2626); }
+
+    .res-sub {
+        font-size: 11px; font-weight: 700; letter-spacing: 1.3px;
+        text-transform: uppercase; color: #64748b; margin-bottom: 10px;
+    }
+    .res-reasons { list-style: none; margin: 0 0 20px 0; padding: 0; }
+    .res-reasons li {
+        display: flex; gap: 10px; font-size: 14.5px; color: #0f172a;
+        line-height: 1.55; margin-bottom: 8px; font-weight: 500;
+    }
+    .res-reasons li::before { content: "▸"; color: #4f46e5; font-weight: 700; flex-shrink: 0; }
+    .res-action {
+        background: rgba(255,255,255,0.75); border-left: 3px solid #4f46e5;
+        padding: 14px 16px; border-radius: 8px;
+        font-size: 14px; color: #0f172a; font-weight: 600; line-height: 1.5;
+    }
+    .res-mode {
+        display: inline-block; font-size: 11px; font-weight: 600;
+        padding: 3px 10px; border-radius: 999px; margin-top: 14px;
+    }
+    .res-mode.ai      { background: #eef2ff; color: #4f46e5; }
+    .res-mode.offline { background: #fef3c7; color: #b45309; }
+
+    .tc-muted { color: #64748b; font-size: 12px; line-height: 1.5; }
+
+    /* Text area */
+    .stTextArea textarea {
+        background: #f8fafc !important; color: #0f172a !important;
+        border: 1.5px solid #e2e8f0 !important; border-radius: 10px !important;
+        font-size: 13.5px !important; line-height: 1.6 !important;
+    }
+    .stTextArea textarea:focus {
+        border-color: #4f46e5 !important; background: #fff !important;
+        box-shadow: 0 0 0 3px rgba(79,70,229,0.1) !important;
+    }
+    .stTextArea textarea::placeholder { color: #94a3b8 !important; }
+
+    /* File uploader */
+    [data-testid="stFileUploaderDropzone"] {
+        background: #f8fafc !important; border: 2px dashed #cbd5e1 !important;
+        border-radius: 12px !important; padding: 12px !important;
+    }
+    [data-testid="stFileUploaderDropzone"]:hover { border-color: #4f46e5 !important; }
+    [data-testid="stFileUploaderDropzone"] span,
+    [data-testid="stFileUploaderDropzone"] small,
+    [data-testid="stFileUploaderDropzone"] p { color: #64748b !important; }
+    [data-testid="stFileUploaderFileName"],
+    [data-testid="stFileUploaderFileName"] *,
+    div[data-testid="stFileUploaderFileName"] span,
+    div[data-testid="stFileUploaderFileName"] small {
+        color: #0f172a !important; font-weight: 600 !important; opacity: 1 !important;
+    }
+    [data-testid="stFileUploaderDeleteBtn"] button,
+    [data-testid="stFileUploaderDeleteBtn"] svg {
+        color: #0f172a !important; fill: #0f172a !important; opacity: 0.7 !important;
+    }
+    [data-testid="stFileUploaderDropzone"] button {
+        background: #eef2ff !important; color: #4f46e5 !important;
+        border: 1px solid #c7d2fe !important; font-weight: 600 !important;
+    }
+
+    /* Primary button */
+    .stButton button {
+        background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+        color: #fff !important; border: none !important; border-radius: 10px !important;
+        font-weight: 700 !important; padding: 12px !important; font-size: 14.5px !important;
+        box-shadow: 0 4px 12px rgba(79,70,229,0.25) !important;
+    }
+    .stButton button:hover { box-shadow: 0 6px 18px rgba(79,70,229,0.35) !important; }
+
+    /* Info cards */
+    .info-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 24px; }
+    @media (max-width: 900px) { .info-row { grid-template-columns: repeat(2, 1fr); } }
+    .info-item {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+        padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    .info-icon { font-size: 22px; margin-bottom: 10px; }
+    .info-title { font-size: 13.5px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+    .info-text { font-size: 12.5px; color: #64748b; line-height: 1.5; }
+</style>
+""", unsafe_allow_html=True)
 
 
-def _section_header(icon: str, chip_class: str, title: str) -> str:
+# ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
+def _section(icon: str, title: str) -> str:
     return (
         f'<div class="tc-sec">'
-        f'<span class="tc-chip {chip_class}">{icon}</span>'
+        f'<span class="tc-icon">{icon}</span>'
         f'<span class="tc-title">{title}</span>'
         f'</div>'
+    )
+
+
+def _render_result(result: dict) -> None:
+    pct = int(result.get("risk_percent", 0))
+    level = str(result.get("risk_level", "Low")).lower()
+    if level not in ("low", "medium", "high"):
+        level = "low"
+
+    reasons = result.get("reasons", []) or []
+    reasons_html = "".join(f"<li>{r}</li>" for r in reasons)
+    action = result.get("action", "Read the full document before signing.")
+    mode = result.get("mode", "ai")
+    mode_label = "⚡ Live AI" if mode == "ai" else "🔌 Offline"
+
+    st.markdown(
+        f'<div class="res-card {level}">'
+        f'<div class="res-pct {level}">{pct}%</div>'
+        f'<div class="res-label">{level.upper()} RISK</div>'
+        f'<div class="res-bar"><span class="{level}" style="width:{pct}%"></span></div>'
+        f'<div class="res-sub">Why</div>'
+        f'<ul class="res-reasons">{reasons_html}</ul>'
+        f'<div class="res-sub">What to do</div>'
+        f'<div class="res-action">{action}</div>'
+        f'<div><span class="res-mode {mode}">{mode_label}</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -323,182 +230,154 @@ def _section_header(icon: str, chip_class: str, title: str) -> str:
 # ─────────────────────────────────────────────────────────────
 st.markdown(
     '<div class="tc-header">'
-    '<h1>📜 TC Sarthi <span class="tc-badge-live">● live</span></h1>'
+    '<h1>📜 TC Sarthi</h1>'
     '<p>Paste or upload a Terms &amp; Conditions document. '
-    'Get the important facts, risky clauses, and a clear verdict — in seconds.</p>'
+    'Get a risk score, the real reasons, and what to do — in seconds, in plain English.</p>'
     '</div>',
     unsafe_allow_html=True,
 )
 
 
 # ─────────────────────────────────────────────────────────────
-# Two columns
+# HORIZONTAL INPUT — paste | upload
 # ─────────────────────────────────────────────────────────────
-left_col, right_col = st.columns([1, 1.15], gap="large")
+col_paste, col_file = st.columns(2, gap="large")
 
-
-# ─────────────────────────────────────────────────────────────
-# Render the final result. Every markdown call is ONE line of HTML.
-# ─────────────────────────────────────────────────────────────
-def _render_result(result: dict) -> None:
-
-    # ── Main points ───────────────────────────────────────────
-    points = result.get("main_points", []) or []
-    points_html = "".join(f"<li>{p}</li>" for p in points)
+with col_paste:
     st.markdown(
-        '<div class="tc-card">'
-        + _section_header("🔎", "tc-chip-blue", "Main Points")
-        + f'<ul class="tc-points">{points_html}</ul>'
-        + '</div>',
+        '<div class="tc-card">' + _section("✍️", "Paste text") + '</div>',
         unsafe_allow_html=True,
     )
-
-    # ── Risk areas ────────────────────────────────────────────
-    labels = [
-        ("money",   "💰", "Money"),
-        ("privacy", "🔒", "Privacy"),
-        ("data",    "📦", "Data"),
-        ("rights",  "⚖️", "Rights"),
-    ]
-
-    risk_html = ""
-    for key, icon, label in labels:
-        area = result.get("risk_areas", {}).get(key, {}) or {}
-        level = (area.get("level") or "low").lower()
-        if level not in ("low", "medium", "high"):
-            level = "low"
-        summary = area.get("summary", "—")
-
-        risk_html += (
-            f'<div class="risk-card {level}">'
-            f'<div class="risk-head">'
-            f'<div class="risk-name">'
-            f'<span class="risk-icon {level}">{icon}</span>'
-            f'{label}'
-            f'</div>'
-            f'{_pill(level)}'
-            f'</div>'
-            f'<div class="risk-body">{summary}</div>'
-            f'<div class="meter"><span class="{level}"></span></div>'
-            f'</div>'
-        )
-
-    st.markdown(
-        _section_header("⚠️", "tc-chip-amber", "Risk Areas") + risk_html,
-        unsafe_allow_html=True,
-    )
-
-    # ── Verdict ───────────────────────────────────────────────
-    verdict = result.get("verdict", {}) or {}
-    v_level = (verdict.get("level") or "low").lower()
-    if v_level not in ("low", "medium", "high"):
-        v_level = "low"
-    v_msg = verdict.get("message", "—")
-
-    st.markdown(
-        f'<div class="verdict {v_level}">'
-        f'<div class="verdict-label">Final Verdict</div>'
-        f'<div class="verdict-level">{v_level.upper()} RISK</div>'
-        f'<div class="verdict-msg">{v_msg}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Meta footer ───────────────────────────────────────────
-    meta = result.get("meta", {}) or {}
-    st.markdown(
-        f'<div class="tc-meta">'
-        f'Provider <b>{meta.get("provider", "—")}</b>'
-        f' &nbsp;·&nbsp; Words <b>{meta.get("word_count", 0)}</b>'
-        f' &nbsp;·&nbsp; Sections <b>{meta.get("section_count", 0)}</b>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ─────────────────────────────────────────────────────────────
-# LEFT COLUMN — input
-# ─────────────────────────────────────────────────────────────
-with left_col:
-    st.markdown(
-        '<div class="tc-card">'
-        + _section_header("📥", "tc-chip-blue", "Input")
-        + '</div>',
-        unsafe_allow_html=True,
-    )
-
     pasted_text = st.text_area(
-        "Paste Terms & Conditions text",
-        height=240,
+        "paste",
+        height=200,
+        max_chars=MAX_PASTE_CHARS,
         placeholder="Paste the full T&C here...",
+        label_visibility="collapsed",
     )
 
+with col_file:
     st.markdown(
-        '<div style="text-align:center; color:#4b5563; font-size:11.5px; margin:6px 0; letter-spacing:2px;">— OR —</div>',
+        '<div class="tc-card">' + _section("📥", "Upload .txt file") + '</div>',
         unsafe_allow_html=True,
     )
-
     uploaded_file = st.file_uploader(
-        "Upload a .txt file",
+        "upload",
         type=["txt"],
         accept_multiple_files=False,
+        help=f"Only .txt files under {MAX_FILE_KB} KB.",
+        label_visibility="collapsed",
     )
+    if uploaded_file is not None:
+        kb = uploaded_file.size / 1024
+        if uploaded_file.size > MAX_FILE_BYTES:
+            st.error(f"Too large: {kb:.1f} KB — max {MAX_FILE_KB} KB.")
+        else:
+            st.success(f"✓ {uploaded_file.name} · {kb:.1f} KB")
 
-    analyze_clicked = st.button(
-        "🚀 Analyze",
-        use_container_width=True,
-        type="primary",
-    )
 
+# ─────────────────────────────────────────────────────────────
+# ANALYZE button
+# ─────────────────────────────────────────────────────────────
+analyze_clicked = st.button("🚀 Analyze", use_container_width=True, type="primary")
+
+st.markdown(
+    f'<div class="tc-muted" style="text-align:center; margin:6px 0 20px 0;">'
+    f'If both are given, the pasted text wins · Limits: {MAX_PASTE_CHARS:,} chars / {MAX_FILE_KB} KB'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# OUTPUT — full width, below
+# ─────────────────────────────────────────────────────────────
+if analyze_clicked:
+    text_to_analyze = ""
+    source = ""
+
+    if pasted_text and pasted_text.strip():
+        text_to_analyze = pasted_text.strip()
+        source = "pasted text"
+    elif uploaded_file is not None:
+        if uploaded_file.size > MAX_FILE_BYTES:
+            st.error(f"File too large. Max {MAX_FILE_KB} KB.")
+        else:
+            try:
+                raw = uploaded_file.getvalue()
+                if not raw:
+                    st.error("The file is empty.")
+                else:
+                    try:
+                        text_to_analyze = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text_to_analyze = raw.decode("latin-1", errors="ignore")
+                    text_to_analyze = text_to_analyze.strip()
+                    source = uploaded_file.name
+                    if not text_to_analyze:
+                        st.error("The file has no readable text.")
+            except Exception as e:
+                st.error(f"Could not read file: {e}")
+
+    if not text_to_analyze:
+        st.warning("Please paste some text or upload a .txt file first.")
+    else:
+        with st.spinner("Analyzing..."):
+            try:
+                st.session_state["last_result"] = _analyze_cached(text_to_analyze)
+                st.session_state["last_source"] = source
+            except Exception as e:
+                st.session_state["last_result"] = None
+                st.error(f"Analysis failed: {e}")
+
+last = st.session_state.get("last_result")
+if last:
+    _render_result(last)
+    src = st.session_state.get("last_source", "")
+    if src:
+        st.markdown(
+            f'<div class="tc-muted" style="text-align:center; margin-top:8px;">'
+            f'Analyzed: {src}</div>',
+            unsafe_allow_html=True,
+        )
+else:
     st.markdown(
-        '<div class="tc-muted" style="margin-top:6px;">'
-        'Tip: if both a file and text are given, the pasted text wins.'
+        '<div class="tc-card" style="text-align:center; padding:56px 20px;">'
+        '<div style="font-size:42px; opacity:0.55; margin-bottom:12px;">📄</div>'
+        '<div style="font-size:15px; font-weight:600; color:#0f172a; margin-bottom:6px;">'
+        'Your analysis will appear here'
+        '</div>'
+        '<div class="tc-muted">Paste text or upload a .txt file, then hit Analyze.</div>'
         '</div>',
         unsafe_allow_html=True,
     )
 
 
 # ─────────────────────────────────────────────────────────────
-# Decide input source. Pasted text wins.
+# INFO row with emojis
 # ─────────────────────────────────────────────────────────────
-final_text = ""
-if pasted_text and pasted_text.strip():
-    final_text = pasted_text.strip()
-elif uploaded_file is not None:
-    try:
-        final_text = uploaded_file.read().decode("utf-8", errors="ignore").strip()
-    except Exception as e:
-        st.error(f"Could not read the file: {e}")
-
-
-# ─────────────────────────────────────────────────────────────
-# RIGHT COLUMN — output
-# ─────────────────────────────────────────────────────────────
-with right_col:
-    if analyze_clicked:
-        if not final_text:
-            st.warning("Please paste some text or upload a .txt file first.")
-        else:
-            with st.spinner("Analyzing the document..."):
-                try:
-                    st.session_state["last_result"] = run(final_text)
-                except Exception as e:
-                    st.session_state["last_result"] = None
-                    st.error(f"Analysis failed: {e}")
-
-    last = st.session_state.get("last_result")
-    if last:
-        _render_result(last)
-    else:
-        st.markdown(
-            '<div class="tc-card" style="text-align:center; padding:44px 20px;">'
-            '<div style="font-size:38px; opacity:0.7;">📄</div>'
-            '<div style="font-size:14px; font-weight:600; margin-top:8px; color:#e6e8eb;">'
-            'Your analysis will appear here'
-            '</div>'
-            '<div class="tc-muted" style="margin-top:6px;">'
-            'Paste or upload a T&amp;C, then hit Analyze.'
-            '</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+st.markdown(
+    '<div class="info-row">'
+    '<div class="info-item">'
+    '<div class="info-icon">⚡</div>'
+    '<div class="info-title">Fast</div>'
+    '<div class="info-text">Results in 2–3 seconds. No 20-minute reading.</div>'
+    '</div>'
+    '<div class="info-item">'
+    '<div class="info-icon">🔒</div>'
+    '<div class="info-title">Private</div>'
+    '<div class="info-text">Your text is never stored. Analyzed and discarded.</div>'
+    '</div>'
+    '<div class="info-item">'
+    '<div class="info-icon">🎯</div>'
+    '<div class="info-title">Accurate</div>'
+    '<div class="info-text">Money, Privacy, Data, Rights — all four risk areas.</div>'
+    '</div>'
+    '<div class="info-item">'
+    '<div class="info-icon">💡</div>'
+    '<div class="info-title">Clear</div>'
+    '<div class="info-text">Plain English. A 15-year-old can understand the output.</div>'
+    '</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)

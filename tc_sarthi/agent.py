@@ -1,249 +1,177 @@
 """
-agent.py — The AI brain.
+agent.py — TC Sarthi AI brain.
 
-What this file does:
-1. Loads the API key from .env based on the PROVIDER variable.
-2. Initialises the correct client (Gemini or OpenAI).
-3. Sends the SYSTEM_PROMPT + built user prompt to the AI.
-4. Parses the JSON response safely.
-5. Validates the structure with Pydantic.
-6. Returns a clean dict the UI can render directly.
-
-Why this file exists separately:
-- It is the ONLY file that talks to an external AI provider.
-- Switching between Gemini and OpenAI is a single .env change.
-- The rest of the app never imports google-genai or openai directly.
-
-Supported providers (set in .env):
-    PROVIDER=gemini   + GEMINI_API_KEY=...
-    PROVIDER=openai   + OPENAI_API_KEY=...
+Chain: 3 Gemini models → offline Python scan. Never fails.
+Output: risk_percent, risk_level, reasons, action, mode.
 """
 
 import os
 import json
-from typing import Literal, List, Dict
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from google import genai
+from google.genai import types
 
-from tc_sarthi import prompts
-from tc_sarthi import checks
-
-
-# ─────────────────────────────────────────────────────────────
-# Load environment variables from .env once, at import time.
-# ─────────────────────────────────────────────────────────────
 load_dotenv()
 
 
 # ─────────────────────────────────────────────────────────────
-# Pydantic models — validate the AI's JSON before we trust it.
-# If the AI returns a wrong shape, we catch it here, not in the UI.
+# Config
 # ─────────────────────────────────────────────────────────────
+MAX_CHARS = 4000
+MAX_OUTPUT_TOKENS = 200
 
-RiskLevel = Literal["low", "medium", "high"]
+MODEL_CHAIN = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+]
 
+_API_KEY = os.getenv("GEMINI_API_KEY")
+if not _API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is missing in .env")
 
-class RiskArea(BaseModel):
-    """One risk category (money / privacy / data / rights)."""
-    level: RiskLevel
-    summary: str = Field(min_length=1)
-
-
-class Verdict(BaseModel):
-    """Overall verdict shown at the bottom of the UI."""
-    level: RiskLevel
-    message: str = Field(min_length=1)
-
-
-class AIResult(BaseModel):
-    """Full structured output expected from the AI."""
-    main_points: List[str] = Field(min_length=1)
-    risk_areas: Dict[str, RiskArea]
-    verdict: Verdict
+_client = genai.Client(api_key=_API_KEY)
 
 
 # ─────────────────────────────────────────────────────────────
-# Model names — change here if you want a different model.
+# Prompt + schema
 # ─────────────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-3.8-flash"
-OPENAI_MODEL = "gpt-4o-mini"
+SYSTEM_PROMPT = (
+    "You are a Terms & Conditions risk checker. "
+    "Return ONLY JSON with: risk_percent (0-100), "
+    "risk_level (Low|Medium|High), "
+    "reasons (2-3 short bullets, max 10 words each), "
+    "action (1 short line, max 15 words). "
+    "Rubric: start 10; +20 auto-renewal; +20 personal data shared; "
+    "+20 data sold; +15 arbitration. Cap 95. "
+    "0-30=Low, 31-60=Medium, 61-95=High. "
+    "Be direct. Warn the user. Never invent clauses."
+)
 
-
-# ─────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────
-
-def _read_provider() -> str:
-    """
-    Read PROVIDER from .env.
-    If missing or unknown, default to 'gemini'.
-    """
-    provider = (os.getenv("PROVIDER") or "gemini").strip().lower()
-    if provider not in ("gemini", "openai"):
-        return "gemini"
-    return provider
-
-
-def _strip_code_fences(text: str) -> str:
-    """
-    Some models wrap JSON in ```json ... ``` fences even when told not to.
-    This removes those fences so json.loads() does not fail.
-    """
-    text = text.strip()
-    if text.startswith("```"):
-        # Drop the first line (``` or ```json)
-        text = text.split("\n", 1)[1] if "\n" in text else text
-        # Drop the trailing ```
-        if text.endswith("```"):
-            text = text[: -3]
-    return text.strip()
-
-
-def _parse_json(raw: str) -> dict:
-    """
-    Parse the AI's raw text into a Python dict.
-    Raises ValueError if parsing fails.
-    """
-    cleaned = _strip_code_fences(raw)
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"AI did not return valid JSON: {e}") from e
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "risk_percent": {"type": "integer"},
+        "risk_level":   {"type": "string", "enum": ["Low", "Medium", "High"]},
+        "reasons":      {"type": "array", "items": {"type": "string"}},
+        "action":       {"type": "string"},
+    },
+    "required": ["risk_percent", "risk_level", "reasons", "action"],
+}
 
 
 # ─────────────────────────────────────────────────────────────
-# Provider callers — one function per provider.
-# Each returns the raw text response from the model.
+# One Gemini call — no thinking_config, AFC disabled
 # ─────────────────────────────────────────────────────────────
-
-def _call_gemini(user_prompt: str) -> str:
-    """
-    Send the prompt to Google Gemini using the new Interactions API
-    and return the text response. Reads GEMINI_API_KEY from .env.
-
-    Uses client.interactions.create(...) which is the current SDK entry
-    point for text generation. The convenience property
-    `interaction.output_text` gives us the final text directly.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is missing in .env")
-
-    # Imported inside the function so the app can still run with
-    # only openai installed (and vice-versa).
-    from google import genai
-
-    client = genai.Client(api_key=api_key)
-
-    # Combine the system prompt with the user prompt.
-    # The Interactions API takes a single `input` string; we pass
-    # the system rules first so the model treats them as authoritative.
-    full_input = f"{prompts.SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
-
-    interaction = client.interactions.create(
-        model=GEMINI_MODEL,
-        input=full_input,
+def _call_model(model: str, prompt: str) -> dict:
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=RESPONSE_SCHEMA,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+        temperature=0.0,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
-    # Convenience property for the final text output.
-    text = getattr(interaction, "output_text", None)
-    if not text:
-        raise RuntimeError("Gemini returned an empty response.")
-    return text
-
-
-def _call_openai(user_prompt: str) -> str:
-    """
-    Send the prompt to OpenAI and return the text response.
-    Reads OPENAI_API_KEY from .env.
-    """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is missing in .env")
-
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": prompts.SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.2,
+    response = _client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config,
     )
 
-    text = response.choices[0].message.content
-    if not text:
-        raise RuntimeError("OpenAI returned an empty response.")
-    return text
+    raw = getattr(response, "text", None)
+    if not raw:
+        raise RuntimeError(f"{model} returned empty.")
+
+    return json.loads(raw)
 
 
 # ─────────────────────────────────────────────────────────────
-# Main public function
+# Offline fallback — pure Python, 0 ms
 # ─────────────────────────────────────────────────────────────
+def _offline_scan(text: str) -> dict:
+    t = text.lower()
+    score = 10
+    reasons = []
 
-def run(text: str) -> dict:
-    """
-    Full pipeline: T&C text in → structured result out.
+    if "auto-renew" in t or "auto renew" in t or "subscription" in t:
+        score += 20
+        reasons.append("Auto-renewal without reminder")
+    if "share your data" in t or "third party" in t or "advertis" in t:
+        score += 20
+        reasons.append("Data shared with third parties")
+    if "sell" in t or "transfer" in t:
+        score += 20
+        reasons.append("Data may be sold or transferred")
+    if "arbitration" in t or "class action" in t:
+        score += 15
+        reasons.append("Disputes go to arbitration")
 
-    Steps:
-      1. checks.analyze(text)       → keyword scan + context chunks
-      2. prompts.build_user_prompt  → final prompt string
-      3. call the selected provider → raw JSON text
-      4. parse + validate           → clean dict
-
-    Returns a dict with this exact shape:
-        {
-            "main_points": [str, ...],
-            "risk_areas": {
-                "money":   {"level": ..., "summary": ...},
-                "privacy": {"level": ..., "summary": ...},
-                "data":    {"level": ..., "summary": ...},
-                "rights":  {"level": ..., "summary": ...},
-            },
-            "verdict": {"level": ..., "message": ...},
-            "meta": {
-                "provider":      "gemini" | "openai",
-                "word_count":    int,
-                "section_count": int,
-                "flags":         {category: int},
-            },
-        }
-
-    Raises RuntimeError on any provider or parse failure, with a
-    readable message so the UI can show it to the user.
-    """
-
-    # ── 1. Pure-Python pre-processing ─────────────────────────
-    analysis = checks.analyze(text)
-
-    # ── 2. Build the prompt ───────────────────────────────────
-    user_prompt = prompts.build_user_prompt(analysis)
-
-    # ── 3. Pick provider and call it ──────────────────────────
-    provider = _read_provider()
-    if provider == "gemini":
-        raw_text = _call_gemini(user_prompt)
+    score = min(95, score)
+    if score <= 30:
+        level, action = "Low", "Looks fine, but still skim the document."
+    elif score <= 60:
+        level, action = "Medium", "Read the risky parts before signing."
     else:
-        raw_text = _call_openai(user_prompt)
+        level, action = "High", "Don't sign without cancelling auto-renew first."
 
-    # ── 4. Parse + validate ───────────────────────────────────
-    parsed = _parse_json(raw_text)
+    if not reasons:
+        reasons = ["No major risk keywords found"]
 
-    try:
-        validated = AIResult(**parsed)
-    except ValidationError as e:
-        raise RuntimeError(f"AI returned an unexpected structure: {e}") from e
-
-    # ── 5. Attach meta and return as plain dict ───────────────
-    result = validated.model_dump()
-    result["meta"] = {
-        "provider": provider,
-        "word_count": analysis["word_count"],
-        "section_count": analysis["section_count"],
-        "flags": analysis["flags"],
+    return {
+        "risk_percent": score,
+        "risk_level":   level,
+        "reasons":      reasons[:3],
+        "action":       action,
+        "mode":         "offline",
     }
-    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# Clean AI output
+# ─────────────────────────────────────────────────────────────
+def _clean(data: dict, model: str) -> dict:
+    percent = max(0, min(100, int(data.get("risk_percent", 0))))
+
+    level = str(data.get("risk_level", "Low")).capitalize()
+    if level not in ("Low", "Medium", "High"):
+        level = "Low"
+
+    reasons = data.get("reasons", []) or []
+    if not isinstance(reasons, list):
+        reasons = []
+    reasons = [str(r).strip() for r in reasons if str(r).strip()][:3] or ["No major risk keywords found"]
+
+    action = str(data.get("action", "")).strip() or "Read the full document before signing."
+
+    return {
+        "risk_percent": percent,
+        "risk_level":   level,
+        "reasons":      reasons,
+        "action":       action,
+        "mode":         "ai",
+        "model":        model,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────
+def run(text: str) -> dict:
+    if not text or not text.strip():
+        raise RuntimeError("No text provided.")
+
+    trimmed = text.strip()[:MAX_CHARS]
+    prompt = f"{SYSTEM_PROMPT}\n\nTerms & Conditions text:\n\n{trimmed}"
+
+    for model in MODEL_CHAIN:
+        try:
+            data = _call_model(model, prompt)
+            print(f"[TC Sarthi] ✓ {model}")
+            return _clean(data, model)
+        except Exception as e:
+            print(f"[TC Sarthi] ✗ {model}: {type(e).__name__}: {e}")
+            continue
+
+    print("[TC Sarthi] ⚠ All models failed → offline scan")
+    return _offline_scan(trimmed)
